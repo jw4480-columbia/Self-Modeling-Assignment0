@@ -114,7 +114,7 @@ def train_forward_model(model,datafile):
 
   loss_min=10
 
-  epochs = 30
+  epochs = 50
   optim=torch.optim.Adam(model.parameters(),lr=0.01)
   for epoch in range(1, 1 + epochs):
     # --
