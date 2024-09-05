@@ -11,6 +11,9 @@ import torch.optim as optim
 import argparse
 import time
 import numpy as np
+from V000_env import V000_sm_Env
+import mpc
+import logging
 
 class MyDNN(nn.Module):
     def __init__(self,env):
@@ -143,3 +146,82 @@ def train_forward_model(model,datafile):
     # --
 
   return model_path
+
+#start a new env that implement the trained model
+class MyEnv(V000_sm_Env):
+    def initModel(self, model_path,env):
+        self.model = MyDNN(env=env)
+        self.model.load_state_dict(torch.load(model_path))
+        self.model_loaded = True
+    def dynamics_step(self, action,n=1):
+        if self.model_loaded:
+            # Use the loaded model to predict new state given the current state and action
+            self.model.eval()
+            state=self.get_obs()
+            for _ in range(n):
+              x=np.r_[state,action]
+              x=x.transpose()
+              #x=x.tolist()
+              #x=x[0]
+
+              with torch.no_grad():
+                  x = torch.tensor(x,dtype=torch.float32)
+                  pred = self.model(x)
+              # Output should be an array of shape (18,1)
+              pred=pred.numpy()
+              pred=np.array(pred)
+              pred=pred.transpose()
+              new_state = pred
+              state=new_state
+            return new_state
+            # ---
+        else:
+            return state
+        
+
+def run_one_epoch(n_epoch,Myconfig,env):
+    obs = env.resetBase()
+    all_rewards = []
+    SANS_data = []
+    gait_parameters = np.loadtxt(Myconfig['param_path'])
+    epoch_data=np.zeros((Myconfig['num_steps'], 18+16+18))
+    for step in range(Myconfig['num_steps']):
+        action = np.random.normal(gait_parameters, scale=Myconfig['gait_gaussian'])
+        next_obs, reward, done, _ = env.step(action)
+        SANS_data.append(np.hstack((obs, action, next_obs)))
+        epoch_data[step,:]=np.hstack((obs, action, next_obs))
+
+        obs = next_obs
+        all_rewards.append(reward)
+        if done:
+            break
+    logging.info(f"Epoch {n_epoch + 1}: Total Reward: {sum(all_rewards)}")
+    return epoch_data
+
+
+def test_one_epoch(n_epoch,Myconfig,env,ismpc=False):
+    obs = env.resetBase()
+    gait_parameters = np.loadtxt(Myconfig['param_path'])
+    epoch_loss=[]
+    all_rewards = []
+    epoch_data=np.zeros((Myconfig['num_steps'], 18+16+18))
+    for step in range(Myconfig['num_steps']):
+        if step==0:
+            current_action = np.random.normal(gait_parameters, scale=Myconfig['gait_gaussian'])
+        if ismpc:
+            action=mpc.MyGD(env,current_action)
+        else:
+            action = np.random.normal(gait_parameters, scale=Myconfig['gait_gaussian'])
+        next_obs, reward, done, _ = env.step(action)
+        pred_obs=env.dynamics_step(action)
+        current_action=action
+        obs = next_obs
+        next_obs = torch.tensor(next_obs,dtype=torch.float32)
+        pred_obs=torch.tensor(pred_obs,dtype=torch.float32)
+        step_loss=loss_fn(pred_obs,next_obs)
+        epoch_loss.append(step_loss)
+        all_rewards.append(reward)
+        if done:
+            break
+    logging.info(f"Epoch {n_epoch + 1}: Overall Loss: {sum(epoch_loss)/Myconfig['num_steps']}; Overall Rewards: {sum(all_rewards)/Myconfig['num_steps']}")
+    return epoch_data,sum(epoch_loss)/Myconfig['num_steps'],sum(all_rewards)/Myconfig['num_steps']

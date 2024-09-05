@@ -12,7 +12,10 @@ from model import MyDNN,DynamicDataset,MyEnv,train_one_epoch,test,train_forward_
 import pickle
 import torch
 import torch.nn as nn
-import mpc
+
+'''This program is for visualization only implementing a model that is already train and tested in main.py, 
+no model training is done by simply running this file'''
+
 Myconfig = {
         'para': np.loadtxt("CAD2URDF/para.csv"),
         'urdf_path': "CAD2URDF/V000/urdf/V000.urdf",
@@ -27,10 +30,9 @@ Myconfig = {
         'log_path': "data/babbling/",
         'random_seed': 2022,
         'gait_gaussian': 0.1,
-        'num_steps': 10,
+        'num_steps': 20,
         'N_epoch': 5000
     }
-
 
 #p.connect(p.GUI)  # Connect to the PyBullet GUI for visualization
 p.connect(p.DIRECT) # Use this to delete GUI for speeding up the program
@@ -41,51 +43,43 @@ gait_parameters = np.loadtxt(Myconfig['param_path'])
 os.makedirs(Myconfig['log_path'], exist_ok=True)  # Ensure log directory exists
 
 # Initialize the environment
+
 env = V000_sm_Env(Myconfig)
 env.sleep_time = Myconfig['sleep_time']
 _ = env.reset()
 print('Pybullet environment initialized\n')
-
-
-num_samples = Myconfig['N_epoch']*Myconfig['num_steps']
-index=0
-X = np.zeros((num_samples, 18+16))
-Y = np.zeros((num_samples, 18))
-
-
-
-#run serial execution
-print('Start running simulation for SANS data by epoch\n')
-for epoch in range(Myconfig['N_epoch']):
-    epoch_data=run_one_epoch(epoch,Myconfig=Myconfig,env=env)
-    X[epoch:epoch+Myconfig['num_steps'],:]=epoch_data[:,0:18+16]
-    Y[epoch:epoch+Myconfig['num_steps'],:]=epoch_data[:,18+16:]
-
-
-
-save_dir='dataset'
-if not os.path.exists(save_dir):
-  os.makedirs(save_dir)
-# Save the collected data in the data.pkl file
-data = {'X': X, 'Y': Y}
-pickle.dump(data, open(os.path.join(save_dir, 'data.pkl'), "wb" ))
-print('Initialize DNN model and train\n')
-#train model
-model=MyDNN(env=env)
-model_path=train_forward_model(model,datafile = 'dataset/data.pkl')
-print(f'Training finished, model path saved to: {model_path}\n')
-#manually test controller and model trained
-
-        
+#model=MyDNN(env=env)
+model_path='dynamics.pth'
 myEnv=MyEnv(Myconfig)
 myEnv.sleep_time = Myconfig['sleep_time']
 _ = myEnv.reset()
 myEnv.initModel(model_path,env=env)
-print('New dynamic model intialized, start verification\n')
-loss_fn = nn.MSELoss()
+'''print('Test model performance without mpc:')
+losses_rand=[]
+rewards_rand=[]
+for epoch in range(30):
+    _,loss,reward=test_one_epoch(epoch,Myconfig=Myconfig,env=myEnv,ismpc=False)
+    losses_rand.append(loss)
+    rewards_rand.append(reward)
 
-for epoch in range(10):
-    test_one_epoch(epoch,Myconfig=Myconfig,env=myEnv)
-
+ave_loss_rand=np.mean(losses_rand)
+dev_loss_rand=np.var(losses_rand)
+ave_reward_rand=np.mean(rewards_rand)
+dev_reward_rand=np.var(rewards_rand)
+print(f'Loss ave:{ave_loss_rand}, dev: {dev_loss_rand}; Rewards ave:{ave_reward_rand}; dev:{dev_reward_rand}')'''
+print('With mpc:')
+losses_mpc=[]
+rewards_mpc=[]
+_ = myEnv.reset()
+for epoch in range(30):
+    _,loss,reward=test_one_epoch(epoch,Myconfig=Myconfig,env=myEnv,ismpc=True)
+    losses_mpc.append(loss)
+    rewards_mpc.append(reward)
+ave_loss_mpc=np.mean(losses_mpc)
+dev_loss_mpc=np.var(losses_mpc)
+ave_reward_mpc=np.mean(rewards_mpc)
+dev_reward_mpc=np.var(rewards_mpc)
+print(f'Loss ave:{ave_loss_mpc}, dev: {dev_loss_mpc}; Rewards ave:{ave_reward_mpc}; dev:{dev_reward_mpc}')
 p.disconnect()
+
 
